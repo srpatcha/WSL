@@ -3582,14 +3582,19 @@ bool LxssUserSessionImpl::_TerminateInstanceInternal(_In_ LPCGUID DistroGuid, _I
                     m_pluginManager.OnDistributionStopping(&m_session, wslcoreInstance->DistributionInformation());
                 }
 
-                instance->second->Stop();
-
-                const auto clientId = instance->second->GetClientId();
-
                 m_lifetimeManager.RemoveCallback(clientKey);
 
+                // Stop the instance and remove it from m_runningInstances atomically
+                // under m_callbackLock. This prevents plugin callbacks (which hold
+                // m_callbackLock shared) from finding a stopped-but-still-listed
+                // instance between Stop() and erase.
+                ULONG clientId;
                 {
                     std::unique_lock callbackLock(m_callbackLock);
+
+                    instance->second->Stop();
+                    clientId = instance->second->GetClientId();
+
                     {
                         auto lock = m_terminatedInstanceLock.lock_exclusive();
                         m_terminatedInstances.push_back(std::move(instance->second));
@@ -3647,9 +3652,16 @@ HRESULT LxssUserSessionImpl::CreateLinuxProcess(_In_opt_ const GUID* Distro, _In
     }
     else
     {
-        const auto distro = _RunningInstance(Distro);
-        THROW_HR_IF(WSL_E_VM_MODE_INVALID_STATE, !distro);
+        // Look up the running instance directly instead of calling _RunningInstance,
+        // which accesses m_lockedDistributions (guarded only by m_instanceLock).
+        // m_runningInstances is safe to read under m_callbackLock (shared).
+        // The _EnsureNotLocked check is unnecessary here: _ConversionBegin removes
+        // a distribution from m_runningInstances before adding it to m_lockedDistributions,
+        // so a locked distribution will never be found in this lookup.
+        const auto instance = m_runningInstances.find(*Distro);
+        THROW_HR_IF(WSL_E_VM_MODE_INVALID_STATE, instance == m_runningInstances.end());
 
+        const auto distro = instance->second;
         const auto wsl2Distro = dynamic_cast<WslCoreInstance*>(distro.get());
         THROW_HR_IF(WSL_E_WSL2_NEEDED, !wsl2Distro);
 
