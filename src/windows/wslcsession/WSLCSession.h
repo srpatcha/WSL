@@ -127,6 +127,7 @@ private:
     void OnContainerDeleted(const WSLCContainerImpl* Container);
     void OnDockerdLog(const gsl::span<char>& Data);
     void OnDockerdExited();
+    void OnVmExited();
     void StartDockerd();
     void ImportImageImpl(DockerHTTPClient::HTTPRequestContext& Request, const WSLCHandle ImageHandle);
     void RecoverExistingContainers();
@@ -150,6 +151,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<WSLCVhdVolumeImpl>> m_volumes;
     std::unordered_set<std::string> m_anonymousVolumes; // TODO: Implement proper anonymous volume support.
     wil::unique_event m_sessionTerminatingEvent{wil::EventOptions::ManualReset};
+    wil::unique_event m_vmExitedEvent{wil::EventOptions::ManualReset};
     wil::srwlock m_lock;
     IORelay m_ioRelay;
     std::optional<ServiceRunningProcess> m_dockerdProcess;

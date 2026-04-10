@@ -26,6 +26,28 @@ using wsl::windows::service::wslc::UserHandle;
 using wsl::windows::service::wslc::WSLCSession;
 using wsl::windows::service::wslc::WSLCVirtualMachine;
 
+// COM callback that signals a local event when the VM terminates.
+// Registered with IWSLCVirtualMachine::RegisterTerminationCallback() so the
+// SYSTEM service can notify us cross-process when HCS reports VM exit.
+struct VmTerminationCallback : winrt::implements<VmTerminationCallback, ITerminationCallback>
+{
+    VmTerminationCallback(HANDLE event)
+    {
+        HANDLE dup = nullptr;
+        THROW_IF_WIN32_BOOL_FALSE(DuplicateHandle(GetCurrentProcess(), event, GetCurrentProcess(), &dup, 0, FALSE, DUPLICATE_SAME_ACCESS));
+        m_event.reset(dup);
+    }
+
+    HRESULT STDMETHODCALLTYPE OnTermination(WSLCVirtualMachineTerminationReason, LPCWSTR) override
+    {
+        m_event.SetEvent();
+        return S_OK;
+    }
+
+private:
+    wil::unique_event m_event;
+};
+
 constexpr auto c_containerdStorage = "/var/lib/docker";
 
 namespace {
@@ -289,6 +311,11 @@ try
 
     m_virtualMachine->Initialize();
 
+    // Register a COM callback with the SYSTEM service to be notified when the VM exits.
+    // The callback signals m_vmExitedEvent, which IORelay monitors to trigger OnVmExited().
+    auto vmTermCallback = winrt::make<VmTerminationCallback>(m_vmExitedEvent.get());
+    THROW_IF_FAILED(Vm->RegisterTerminationCallback(vmTermCallback.as<ITerminationCallback>().get()));
+
     // Configure storage.
     ConfigureStorage(*Settings, tokenInfo->User.Sid);
 
@@ -305,6 +332,10 @@ try
 
     //  Start the event tracker.
     m_eventTracker.emplace(m_dockerClient.value(), m_id, m_ioRelay);
+
+    // Monitor for unexpected VM exit.
+    m_ioRelay.AddHandle(
+        std::make_unique<windows::common::relay::EventHandle>(m_vmExitedEvent.get(), std::bind(&WSLCSession::OnVmExited, this)));
 
     // Recover any existing containers from storage.
     RecoverExistingVolumes();
@@ -411,6 +442,30 @@ void WSLCSession::OnDockerdExited()
     {
         WSL_LOG("UnexpectedDockerdExit", TraceLoggingValue(m_displayName.c_str(), "Name"));
     }
+}
+
+void WSLCSession::OnVmExited()
+{
+    if (m_sessionTerminatingEvent.is_signaled())
+    {
+        return; // Already shutting down (normal termination path).
+    }
+
+    WSL_LOG(
+        "UnexpectedVmExit",
+        TraceLoggingLevel(WINEVENT_LEVEL_WARNING),
+        TraceLoggingValue(m_id, "SessionId"),
+        TraceLoggingValue(m_displayName.c_str(), "Name"));
+
+    // N.B. This callback runs on the IORelay thread. Terminate() calls m_ioRelay.Stop()
+    // which joins the IORelay thread, so we must run termination on a separate thread
+    // to avoid deadlock. Capture a COM reference to prevent the session from being
+    // destroyed before the thread runs.
+    Microsoft::WRL::ComPtr<WSLCSession> self(this);
+    std::thread([self]() {
+        wsl::windows::common::wslutil::SetThreadDescription(L"VmExitTermination");
+        LOG_IF_FAILED(self->Terminate());
+    }).detach();
 }
 
 void WSLCSession::OnDockerdLog(const gsl::span<char>& buffer)
@@ -1792,40 +1847,55 @@ try
     m_eventTracker.reset();
     m_dockerClient.reset();
 
+    // Check if the VM has already exited (e.g., killed externally).
+    // If so, skip operations that require a live VM to avoid unnecessary waits.
+    const bool vmDead = m_vmExitedEvent.is_signaled();
+
     // Stop dockerd.
     // N.B. dockerd wait a couple seconds if there are any outstanding HTTP request sockets opened.
     if (m_dockerdProcess.has_value())
     {
-        LOG_IF_FAILED(m_dockerdProcess->Get().Signal(WSLCSignalSIGTERM));
+        if (!vmDead)
+        {
+            LOG_IF_FAILED(m_dockerdProcess->Get().Signal(WSLCSignalSIGTERM));
 
-        int exitCode = -1;
-        try
-        {
-            exitCode = m_dockerdProcess->Wait(30 * 1000);
-        }
-        catch (...)
-        {
-            LOG_CAUGHT_EXCEPTION();
+            int exitCode = -1;
             try
             {
-                m_dockerdProcess->Get().Signal(WSLCSignalSIGKILL);
-                exitCode = m_dockerdProcess->Wait(10 * 1000);
+                exitCode = m_dockerdProcess->Wait(30 * 1000);
             }
-            CATCH_LOG();
+            catch (...)
+            {
+                LOG_CAUGHT_EXCEPTION();
+                try
+                {
+                    m_dockerdProcess->Get().Signal(WSLCSignalSIGKILL);
+                    exitCode = m_dockerdProcess->Wait(10 * 1000);
+                }
+                CATCH_LOG();
+            }
+
+            WSL_LOG("DockerdExit", TraceLoggingValue(exitCode, "code"));
+        }
+        else
+        {
+            WSL_LOG("SkippingDockerdShutdown_VmDead");
         }
 
-        WSL_LOG("DockerdExit", TraceLoggingValue(exitCode, "code"));
         m_dockerdProcess.reset();
     }
 
     if (m_virtualMachine)
     {
-        // N.B. dockerd has exited by this point, so unmounting the VHD is safe since no container can be running.
-        try
+        if (!vmDead)
         {
-            m_virtualMachine->Unmount(c_containerdStorage);
+            // N.B. dockerd has exited by this point, so unmounting the VHD is safe since no container can be running.
+            try
+            {
+                m_virtualMachine->Unmount(c_containerdStorage);
+            }
+            CATCH_LOG();
         }
-        CATCH_LOG();
 
         m_virtualMachine.reset();
     }

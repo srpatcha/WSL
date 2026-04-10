@@ -425,6 +425,10 @@ interface IWSLCVirtualMachine : IUnknown
 
     // Removes a previously added filesystem share.
     HRESULT RemoveShare([in] REFGUID ShareId);
+
+    // Registers a callback to be invoked when the VM exits.
+    // The callback receives the exit reason and optional details.
+    HRESULT RegisterTerminationCallback([in] ITerminationCallback* Callback);
 }
 
 typedef enum _WSLCSessionStorageFlags

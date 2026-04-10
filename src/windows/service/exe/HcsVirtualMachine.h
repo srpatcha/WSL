@@ -43,6 +43,7 @@ public:
     IFACEMETHOD(DetachDisk)(_In_ ULONG Lun) override;
     IFACEMETHOD(AddShare)(_In_ LPCWSTR WindowsPath, _In_ BOOL ReadOnly, _Out_ GUID* ShareId) override;
     IFACEMETHOD(RemoveShare)(_In_ REFGUID ShareId) override;
+    IFACEMETHOD(RegisterTerminationCallback)(_In_ ITerminationCallback* Callback) override;
 
 private:
     struct DiskInfo
@@ -97,6 +98,12 @@ private:
     bool m_crashLogCaptured = false;
 
     wil::com_ptr<ITerminationCallback> m_terminationCallback;
+
+    // Session-side termination callback, registered via RegisterTerminationCallback().
+    // Guarded by m_sessionTerminationCallbackLock (separate from m_lock to avoid
+    // deadlock between HCS callback thread and destructor which holds m_lock).
+    std::mutex m_sessionTerminationCallbackLock;
+    wil::com_ptr<ITerminationCallback> m_sessionTerminationCallback;
 };
 
 } // namespace wsl::windows::service::wslc

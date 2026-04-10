@@ -6740,4 +6740,96 @@ class WSLCTests
 
         ValidateProcessOutput(initProcess, {{1, "OK\n"}});
     }
+
+    // Kills the VM for a session by finding it via the "WSLC-<name>" owner in hcsdiag output.
+    // hcsdiag detail line format: "    VM, <State>, <GUID>, WSLC-<name>"
+    static void KillSessionVm(LPCWSTR sessionName)
+    {
+        auto ownerTag = std::format(L"WSLC-{}", sessionName);
+
+        wsl::windows::common::SubProcess listProc(nullptr, L"hcsdiag.exe list");
+        auto listOutput = listProc.RunAndCaptureOutput(10000);
+
+        auto& output = listOutput.Stdout;
+        auto ownerPos = output.find(ownerTag);
+        VERIFY_IS_TRUE(ownerPos != std::wstring::npos);
+
+        // The GUID (36 chars) appears before ", WSLC-<name>" in the detail line.
+        auto guidEnd = output.rfind(L", ", ownerPos);
+        VERIFY_IS_TRUE(guidEnd != std::wstring::npos && guidEnd >= 36);
+
+        auto vmId = output.substr(guidEnd - 36, 36);
+        VERIFY_IS_TRUE(wsl::shared::string::ToGuid(vmId.c_str()).has_value());
+
+        VERIFY_ARE_EQUAL(wsl::windows::common::SubProcess(nullptr, std::format(L"hcsdiag.exe kill {}", vmId).c_str()).Run(10000), 0u);
+    }
+
+    // Waits for a session to terminate (GetState returns terminated or RPC error).
+    static bool WaitForSessionTermination(IWSLCSession* session, DWORD timeoutSeconds = 30)
+    {
+        for (DWORD i = 0; i < timeoutSeconds; i++)
+        {
+            Sleep(1000);
+
+            WSLCSessionState state{};
+            auto hr = session->GetState(&state);
+            if (FAILED(hr) || state == WSLCSessionStateTerminated)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    WSLC_TEST_METHOD(VmKillTerminatesSession)
+    {
+        static constexpr auto c_sessionName = L"wslc-vm-kill-test";
+        auto settings = GetDefaultSessionSettings(c_sessionName);
+        auto session = CreateSession(settings);
+
+        KillSessionVm(c_sessionName);
+
+        VERIFY_IS_TRUE(WaitForSessionTermination(session.get()));
+    }
+
+    WSLC_TEST_METHOD(VmKillFailsInFlightOperations)
+    {
+        static constexpr auto c_sessionName = L"wslc-vm-kill-inflight-test";
+        auto settings = GetDefaultSessionSettings(c_sessionName);
+        auto session = CreateSession(settings);
+
+        WSLCProcessLauncher launcher("/bin/sleep", {"/bin/sleep", "99999"});
+        auto process = launcher.Launch(*session);
+
+        KillSessionVm(c_sessionName);
+
+        // The process should fail (not hang).
+        auto exitEvent = process.GetExitEvent();
+        bool exited = exitEvent.wait(30000);
+        if (!exited)
+        {
+            WSLCProcessState processState{};
+            int exitCode{};
+            VERIFY_IS_TRUE(FAILED(process.Get().GetState(&processState, &exitCode)));
+        }
+    }
+
+    WSLC_TEST_METHOD(CleanShutdownStillWorks)
+    {
+        auto settings = GetDefaultSessionSettings(L"wslc-clean-shutdown-test");
+        auto session = CreateSession(settings);
+
+        ExpectCommandResult(session.get(), {"/bin/echo", "hello"}, 0);
+
+        auto hr = session->Terminate();
+        VERIFY_IS_TRUE(SUCCEEDED(hr) || hr == HRESULT_FROM_WIN32(RPC_S_CALL_FAILED));
+
+        if (SUCCEEDED(hr))
+        {
+            WSLCSessionState state{};
+            VERIFY_SUCCEEDED(session->GetState(&state));
+            VERIFY_ARE_EQUAL(state, WSLCSessionStateTerminated);
+        }
+    }
 };

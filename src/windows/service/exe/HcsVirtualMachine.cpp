@@ -49,7 +49,7 @@ HcsVirtualMachine::HcsVirtualMachine(_In_ const WSLCSessionSettings* Settings)
 
     // Build HCS settings
     hcs::ComputeSystem systemSettings{};
-    systemSettings.Owner = L"WSL";
+    systemSettings.Owner = std::format(L"WSLC-{}", Settings->DisplayName);
     systemSettings.ShouldTerminateOnLastHandleClosed = true;
 
     // Determine which schema version to use based on the Windows version. Windows 10 does not support
@@ -280,6 +280,15 @@ HcsVirtualMachine::HcsVirtualMachine(_In_ const WSLCSessionSettings* Settings)
 HcsVirtualMachine::~HcsVirtualMachine()
 {
     std::lock_guard lock(m_lock);
+
+    // Clear the session termination callback before destroying the VM.
+    // During normal shutdown, the session is already terminating — firing the
+    // callback would cause a redundant (and potentially crashing) COM call.
+    // Uses its own lock to avoid deadlock with HCS callback thread.
+    {
+        std::lock_guard callbackLock(m_sessionTerminationCallbackLock);
+        m_sessionTerminationCallback = nullptr;
+    }
 
     // Wait up to 5 seconds for the VM to terminate gracefully.
     bool forceTerminate = false;
@@ -581,6 +590,15 @@ try
 }
 CATCH_RETURN()
 
+HRESULT HcsVirtualMachine::RegisterTerminationCallback(_In_ ITerminationCallback* Callback)
+try
+{
+    std::lock_guard lock(m_sessionTerminationCallbackLock);
+    m_sessionTerminationCallback = Callback;
+    return S_OK;
+}
+CATCH_RETURN()
+
 void CALLBACK HcsVirtualMachine::OnVmExitCallback(HCS_EVENT* Event, void* Context)
 try
 {
@@ -629,6 +647,17 @@ void HcsVirtualMachine::OnExit(const HCS_EVENT* Event)
     if (m_terminationCallback)
     {
         LOG_IF_FAILED(m_terminationCallback->OnTermination(reason, Event->EventData));
+    }
+
+    wil::com_ptr<ITerminationCallback> sessionCallback;
+    {
+        std::lock_guard lock(m_sessionTerminationCallbackLock);
+        sessionCallback = m_sessionTerminationCallback;
+    }
+
+    if (sessionCallback)
+    {
+        LOG_IF_FAILED(sessionCallback->OnTermination(reason, Event->EventData));
     }
 }
 
