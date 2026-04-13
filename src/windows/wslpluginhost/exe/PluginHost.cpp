@@ -132,6 +132,7 @@ try
     WSLVmCreationSettings settings{};
     settings.CustomConfigurationFlags = static_cast<WSLUserConfiguration>(CustomConfigurationFlags);
 
+    std::lock_guard hookLock(m_hookLock);
     g_hookThreadId.store(GetCurrentThreadId());
     m_pluginErrorMessage.reset();
     auto cleanup = wil::scope_exit([&] { g_hookThreadId.store(0); });
@@ -159,6 +160,7 @@ try
 
     auto ctx = BuildSessionContext(SessionId, UserToken, SidSize, SidData);
 
+    std::lock_guard hookLock(m_hookLock);
     g_hookThreadId.store(GetCurrentThreadId());
     auto cleanup = wil::scope_exit([&] { g_hookThreadId.store(0); });
 
@@ -202,6 +204,7 @@ try
     distro.Flavor = Flavor ? Flavor : L"";
     distro.Version = Version ? Version : L"";
 
+    std::lock_guard hookLock(m_hookLock);
     g_hookThreadId.store(GetCurrentThreadId());
     m_pluginErrorMessage.reset();
     auto cleanup = wil::scope_exit([&] { g_hookThreadId.store(0); });
@@ -248,6 +251,7 @@ try
     distro.Flavor = Flavor ? Flavor : L"";
     distro.Version = Version ? Version : L"";
 
+    std::lock_guard hookLock(m_hookLock);
     g_hookThreadId.store(GetCurrentThreadId());
     auto cleanup = wil::scope_exit([&] { g_hookThreadId.store(0); });
 
@@ -283,6 +287,7 @@ try
     distro.Flavor = Flavor ? Flavor : L"";
     distro.Version = Version ? Version : L"";
 
+    std::lock_guard hookLock(m_hookLock);
     g_hookThreadId.store(GetCurrentThreadId());
     auto cleanup = wil::scope_exit([&] { g_hookThreadId.store(0); });
 
@@ -318,6 +323,7 @@ try
     distro.Flavor = Flavor ? Flavor : L"";
     distro.Version = Version ? Version : L"";
 
+    std::lock_guard hookLock(m_hookLock);
     g_hookThreadId.store(GetCurrentThreadId());
     auto cleanup = wil::scope_exit([&] { g_hookThreadId.store(0); });
 

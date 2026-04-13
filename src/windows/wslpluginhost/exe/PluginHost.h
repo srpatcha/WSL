@@ -117,6 +117,10 @@ private:
     WSLPluginHooksV1 m_hooks{};
     Microsoft::WRL::ComPtr<IWslPluginHostCallback> m_callback;
 
+    // Serializes hook dispatch so m_pluginErrorMessage and g_hookThreadId
+    // are not raced when multiple sessions call hooks concurrently (MTA).
+    std::mutex m_hookLock;
+
     // Error message captured by LocalPluginError during hook execution
     std::optional<std::wstring> m_pluginErrorMessage;
 };
