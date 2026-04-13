@@ -281,6 +281,7 @@ std::regex BuildImageReferenceRegex()
     return std::regex("^" + capture(namePat) + optional(":" + capture(tag)) + optional("@" + capture(digest)) + "$");
 }
 
+
 } // namespace
 
 template <typename TInterface>
@@ -1133,6 +1134,7 @@ std::pair<std::string, std::string> wsl::windows::common::wslutil::NormalizeRepo
     return {domain, path};
 }
 
+
 std::pair<wil::unique_hfile, wil::unique_hfile> wsl::windows::common::wslutil::OpenAnonymousPipe(DWORD Size, bool ReadPipeOverlapped, bool WritePipeOverlapped)
 {
     // Default to 4096 byte buffer, just like CreatePipe().
@@ -1402,6 +1404,7 @@ WSLCHandle wsl::windows::common::wslutil::ToCOMInputHandle(HANDLE Handle)
         THROW_HR_MSG(HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED), "Unsupported handle type: %d", type);
     }
 }
+
 
 winrt::Windows::Management::Deployment::PackageVolume wsl::windows::common::wslutil::GetSystemVolume()
 try

@@ -273,6 +273,7 @@ std::vector<DWORD> ListRunningProcesses();
 
 std::pair<std::string, std::string> NormalizeRepo(const std::string& Input);
 
+
 std::pair<wil::unique_hfile, wil::unique_hfile> OpenAnonymousPipe(DWORD Size, bool ReadPipeOverlapped, bool WritePipeOverlapped);
 
 wil::unique_handle OpenCallingProcess(_In_ DWORD access);
@@ -327,6 +328,7 @@ wil::unique_hlocal_string SidToString(_In_ PSID Sid);
 WSLCHandle ToCOMInputHandle(HANDLE Handle);
 [[nodiscard]] WSLCHandle ToCOMOutputHandle(HANDLE Handle, DWORD Access);
 [[nodiscard]] WSLCHandle ToCOMOutputHandle(HANDLE Handle, DWORD Access, WSLCHandleType Type);
+
 
 winrt::Windows::Management::Deployment::PackageVolume GetSystemVolume();
 
