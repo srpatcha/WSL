@@ -33,8 +33,6 @@
         },
         {
             "component": {
-        {
-            "component": {
                 "type": "git",
                 "git": {
                     "repositoryUrl": "https://github.com/boostorg/boost",
