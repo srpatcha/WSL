@@ -29,6 +29,8 @@ using wsl::windows::service::wslc::WSLCVirtualMachine;
 // COM callback that signals a local event when the VM terminates.
 // Registered with IWSLCVirtualMachine::RegisterTerminationCallback() so the
 // SYSTEM service can notify us cross-process when HCS reports VM exit.
+// N.B. OnTermination is called from the HCS callback thread in the service process.
+// No COM marshaling is needed because the callback only signals an event.
 struct VmTerminationCallback : winrt::implements<VmTerminationCallback, ITerminationCallback>
 {
     VmTerminationCallback(HANDLE event)
@@ -1809,6 +1811,12 @@ CATCH_RETURN();
 HRESULT WSLCSession::Terminate()
 try
 {
+    // Ensure only one Terminate() runs to completion. OnVmExited() can race
+    // with an external Terminate() call; the second caller is a no-op.
+    if (m_terminated.exchange(true))
+    {
+        return S_OK;
+    }
 
     {
         std::lock_guard lock(m_userHandlesLock);
@@ -1900,7 +1908,6 @@ try
         m_virtualMachine.reset();
     }
 
-    m_terminated = true;
     return S_OK;
 }
 CATCH_RETURN();

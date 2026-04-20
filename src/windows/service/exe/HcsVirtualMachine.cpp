@@ -595,6 +595,13 @@ try
 {
     std::lock_guard lock(m_sessionTerminationCallbackLock);
     m_sessionTerminationCallback = Callback;
+
+    // If the VM already exited before registration, invoke the callback now.
+    if (m_vmExitEvent.is_signaled() && Callback)
+    {
+        LOG_IF_FAILED(Callback->OnTermination(WSLCVirtualMachineTerminationReasonUnknown, L""));
+    }
+
     return S_OK;
 }
 CATCH_RETURN()
